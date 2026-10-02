@@ -1,6 +1,21 @@
 # humanmouse
 
-Learn human mouse movement from your own recordings and replay it in Playwright.
+Learn human mouse movement, typing and trackpad scrolling from your own recordings and replay
+them in Playwright: clicks, drags (kanban cards, sliders, color pickers), typing and scrolling.
+
+## Quick start (included model)
+
+`checkpoints/model.pt` and `checkpoints/behavior.json` are ready to use, so you can try it without
+recording anything. The path model was pretrained on [SapiMouse](https://www.ms.sapientia.ro/~manyi/sapimouse/sapimouse.html)
+(Antal et al., 2021; 120 users) and fine-tuned on ~300 clicks from one person on a trackpad; the typing,
+drag and scroll timing comes from that same person. For movement that looks like *you*, record and train
+your own (below).
+
+```bash
+pip install -e .
+python -m playwright install chromium
+python scripts/demo.py --trials 20      # opens Chromium and performs the recorder tasks; watch the red cursor
+```
 
 ```
 collect/            recorder page + tiny server (writes data/raw/*.json)
@@ -18,6 +33,7 @@ scripts/
   evaluate.py       real vs generated vs in-browser comparison (+ plots)
   fit_behavior.py   drag / type / scroll recordings → checkpoints/behavior.json
   demo.py           model performs the recorder task in Chromium, recorded to data/bot/
+tests/              unit tests + headless-Chromium tests of every action (pytest)
 ```
 
 ## How it works
@@ -35,7 +51,7 @@ chosen, and the small remaining endpoint error is blended into the tail of the p
 ## Usage
 
 ```bash
-pip install -r requirements.txt
+pip install -e ".[eval,test]"      # or: pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
@@ -126,6 +142,15 @@ await mouse.type_into("input[name=q]", "hello world", submit=True)
 await mouse.scroll_to("#footer")               # trackpad flicks, re-checking after each
 ```
 
+## Tests
+
+```bash
+python -m pytest
+```
+
+The browser tests drive real sliders, a color picker, an HTML5 drag-and-drop kanban board, a text field and a
+scrolling list in headless Chromium (about 45 s). They're skipped if Chromium or `checkpoints/model.pt` is missing.
+
 ## Knobs and next steps
 
 - `temperature` (default 0.8): lower values give smoother, more stereotyped paths; higher values give more variety and wobble.
@@ -134,3 +159,8 @@ await mouse.scroll_to("#footer")               # trackpad flicks, re-checking af
   drift between actions; replace the GRU with a small transformer once you have >10k trials.
 
 Use this responsibly: for testing your own apps, UX/accessibility research, and demos, within the terms of the sites you automate.
+
+## License
+
+MIT (see `LICENSE`). If you use the included model, please also cite SapiMouse:
+M. Antal, N. Fejér, K. Buza, "SapiMouse: Mouse Dynamics-based User Authentication Using Deep Feature Learning", SACI 2021.

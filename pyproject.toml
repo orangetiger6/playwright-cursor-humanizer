@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "humanmouse"
+version = "0.1.0"
+description = "Learn human mouse movement, typing and scrolling from recordings and replay it in Playwright"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = ["torch>=2.2", "numpy>=1.26", "playwright>=1.40"]
+
+[project.optional-dependencies]
+eval = ["matplotlib>=3.8"]
+test = ["pytest>=8"]
+
+[tool.setuptools]
+packages = ["humanmouse"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
