@@ -8,13 +8,15 @@ humanmouse/
   data.py           resample → trim → canonical frame (start (0,0), target (1,0)) + condition vector
   model.py          GRU + bivariate Gaussian mixture density head (Graves 2013), end-of-movement flag
   generate.py       PathGenerator: sample, snap endpoint, map back to screen coords
-  playwright_driver.py  HumanMouse: move_to / click with real-time pacing
+  behavior.py       drag / typing / trackpad-scroll timing: fitted from recordings, with defaults
+  playwright_driver.py  HumanMouse: move_to / click / drag / type_into / scroll_to with real-time pacing
   metrics.py        kinematic metrics, Fitts' law fit, KS statistic
 scripts/
   make_synthetic.py hand-built fake data for smoke tests
   import_public.py  SapiMouse / BOUN / Balabit CSV logs → trial JSON
   train.py          training loop
   evaluate.py       real vs generated vs in-browser comparison (+ plots)
+  fit_behavior.py   drag / type / scroll recordings → checkpoints/behavior.json
   demo.py           model performs the recorder task in Chromium, recorded to data/bot/
 ```
 
@@ -43,11 +45,14 @@ python -m playwright install chromium
 python collect/server.py
 ```
 
-Open http://127.0.0.1:8765, click **Begin**, then keep clicking the blue targets. Saves every 25 trials
-(or press `S`). Tips:
+Open http://127.0.0.1:8765, click **Begin**, then follow the instruction in the top bar. Most tasks are
+"click the blue target"; mixed in are drags (orange square into the dashed box), typing (click the field,
+type the phrase, Enter) and scrolling (scroll the list to the blue row and click it). Saves every 25
+trials (or press `S`). `?tasks=scroll,type` limits the mix. Tips:
 - Aim for 1,500+ trials across several sessions and days. Short sessions keep the data free of fatigue.
 - Record on the same mouse, OS pointer speed and screen scaling that you want to reproduce.
 - Work at a normal pace. Don't try to be fast or careful; the goal is ordinary behavior.
+- Scroll with the device you want reproduced. Only pixel-mode wheel events (trackpads) become scroll flicks.
 
 **2. Smoke-test the pipeline** (optional, no recording needed)
 
@@ -93,25 +98,39 @@ python scripts/demo.py --ckpt checkpoints/model.pt --trials 50
 python scripts/evaluate.py --ckpt checkpoints/model.pt --compare "data/bot/*.json"
 ```
 
+For drags, typing and scrolling, the model isn't needed: their pauses, keystroke rhythm and trackpad
+flicks are sampled from your recordings (anything with fewer than 8 samples uses built-in defaults).
+
+```bash
+python scripts/fit_behavior.py --data "data/raw/*.json"      # -> checkpoints/behavior.json
+```
+
 KS columns near 0 mean the generated distribution matches yours. The `browser` column measures what
 actually reached the page, which captures timing effects the model alone can't see.
 
 **5. Use it**
 
 ```python
-from humanmouse import HumanMouse, PathGenerator
+from humanmouse import Behavior, HumanMouse, PathGenerator
 
 gen = PathGenerator("checkpoints/model.pt")
-mouse = HumanMouse(page, gen, position=(400, 300))
+mouse = HumanMouse(page, gen, position=(400, 300), behavior=Behavior("checkpoints/behavior.json", rng=gen.rng))
 await mouse.click("button#submit")
 await mouse.move_to(800, 200)
+await mouse.drag("#card", "#done-column")
+await mouse.drag((x0, y), (x1, y))            # exact points: press here, release there
+await mouse.set_slider("#volume", 70)          # <input type=range>: reads back and nudges if off
+await mouse.set_slider("#track", fraction=0.3, handle="#knob")   # custom (div) slider
+await mouse.drag(await mouse.point_at("#sv", 0.1, 0.9), await mouse.point_at("#sv", 0.8, 0.2))  # color picker
+await mouse.type_into("input[name=q]", "hello world", submit=True)
+await mouse.scroll_to("#footer")               # trackpad flicks, re-checking after each
 ```
 
 ## Knobs and next steps
 
 - `temperature` (default 0.8): lower values give smoother, more stereotyped paths; higher values give more variety and wobble.
 - Hold out a whole recording session for validation instead of random trials to measure generalization honestly.
-- Ideas: condition on a per-user/session embedding; add scroll and drag trials to the recorder; model the idle
+- Ideas: condition on a per-user/session embedding; typing mistakes and corrections; model the idle
   drift between actions; replace the GRU with a small transformer once you have >10k trials.
 
 Use this responsibly: for testing your own apps, UX/accessibility research, and demos, within the terms of the sites you automate.

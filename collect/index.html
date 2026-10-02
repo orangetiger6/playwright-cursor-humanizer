@@ -5,11 +5,19 @@
 <title>Mouse Recorder</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #f6f5f2; font-family: system-ui, sans-serif; user-select: none; }
-  #hud { position: fixed; top: 8px; left: 12px; font-size: 13px; color: #555; pointer-events: none; }
-  #save { position: fixed; top: 6px; right: 10px; font-size: 13px; }
+  #hud { position: fixed; top: 8px; left: 12px; font-size: 13px; color: #555; pointer-events: none; z-index: 10; }
+  #save { position: fixed; top: 6px; right: 10px; font-size: 13px; z-index: 10; }
   #target { position: absolute; display: none; background: #2f6fde; border-radius: 6px; }
   #target.circle { border-radius: 50%; }
-  #begin { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 14px 28px; font-size: 16px; cursor: pointer; }
+  #begin { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 14px 28px; font-size: 16px; cursor: pointer; z-index: 5; }
+  #chip { position: absolute; display: none; background: #e8872b; border-radius: 8px; cursor: grab; touch-action: none; z-index: 2; }
+  #zone { position: absolute; display: none; border: 2px dashed #2f6fde; border-radius: 10px; background: rgba(47, 111, 222, .06); box-sizing: border-box; }
+  #form { position: absolute; display: none; }
+  #prompt { font-size: 15px; color: #333; margin-bottom: 6px; white-space: nowrap; }
+  #field { font-size: 15px; padding: 6px 8px; width: 280px; border: 1px solid #999; border-radius: 6px; user-select: text; }
+  #scroller { position: fixed; top: 32px; left: 0; right: 0; bottom: 0; overflow-y: auto; display: none; background: #fff; }
+  .row { height: 44px; line-height: 44px; padding-left: 24px; border-bottom: 1px solid #eee; box-sizing: border-box; color: #666; font-size: 14px; }
+  .row.hot { background: #2f6fde; color: #fff; }
 </style>
 </head>
 <body>
@@ -17,20 +25,59 @@
 <button id="save" title="Shortcut: S">Save</button>
 <button id="begin">Begin</button>
 <div id="target"></div>
+<div id="zone"></div>
+<div id="chip"></div>
+<div id="form"><div id="prompt"></div><input id="field" autocomplete="off" spellcheck="false"></div>
+<div id="scroller"></div>
 <script>
-// Records mouse trajectories between successive target clicks.
-// Each trial starts at the previous click and ends at the press on the next target.
+// Records a mix of tasks:
+//   click   move to a target and click it (the trial starts at the previous action's end point)
+//   drag    carry the orange square into the dashed box
+//   type    click a field, type the phrase shown, press Enter
+//   scroll  scroll a long list to the highlighted row and click it
+// The movement to the square in a drag task and to the field in a type task is saved as an
+// ordinary click trial too, so every task also adds pointing data.
+// ?tasks=scroll,type restricts the mix; ?source=bot marks sessions recorded by the demo.
 const params = new URLSearchParams(location.search);
 const SOURCE = (params.get('source') || 'human').replace(/[^a-z0-9_-]/gi, '');
 const AUTOSAVE_EVERY = 25;
 // [width, height] — circles/icons plus button- and link-shaped rectangles.
 const SIZES = [[12,12],[16,16],[24,24],[36,36],[56,56],[80,80],[60,20],[90,28],[140,36],[220,44]];
+const WEIGHTS = { click: 0.55, drag: 0.15, type: 0.15, scroll: 0.15 };
+const ENABLED = (params.get('tasks') || Object.keys(WEIGHTS).join(',')).split(',').filter(k => k in WEIGHTS);
+const MIX = Object.entries(WEIGHTS).filter(([k]) => ENABLED.includes(k));
+const PHRASES = [
+  'the quick brown fox', 'see you at 3pm', 'meeting moved to Tuesday', 'hello world', 'order #4521 ships Friday',
+  'remind me tomorrow', 'Sounds good, thanks!', 'new york city', 'coffee at 10?', 'Project update v2',
+  'call back in 5 minutes', 'blue whale', 'lunch is on me', 'San Francisco, CA', 'running late, sorry',
+  'check the logs', '2 cups of flour', 'Happy birthday!', 'weekly report draft', 'turn left at the light',
+  'Invoice 2026-114', 'grab milk and eggs', "let's ship it", 'jazz on the radio', 'Room 12B at noon',
+];
+const INSTRUCTIONS = {
+  click: 'click the blue target',
+  drag: 'drag the orange square into the dashed box',
+  type: 'click the field, type the text above it, press Enter',
+  scroll: 'scroll to the blue row and click it',
+};
+const ROWS = 300, ROW_H = 44;
 
-const target = document.getElementById('target');
-const begin = document.getElementById('begin');
-const hud = document.getElementById('hud');
+const $ = id => document.getElementById(id);
+const [target, begin, hud, save, chip, zone, form, prompt, field, scroller] =
+  ['target', 'begin', 'hud', 'save', 'chip', 'zone', 'form', 'prompt', 'field', 'scroller'].map($);
+for (let i = 0; i < ROWS; i++) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.textContent = `Item ${i + 1}`;
+  scroller.append(row);
+}
+
 let session = newSession();
-let trial = null;
+let task = null;           // current task: {kind, phase, ...}
+let trial = null;          // pointing movement in progress; ends with a press on `aim`
+let aim = null;
+let hotRow = null;
+let pendingResume = null;  // finished type task, waiting for the hand to return to the mouse
+let pos = [innerWidth / 2, innerHeight / 2];
 let total = 0;
 
 function newSession() {
@@ -46,36 +93,127 @@ function newSession() {
 
 function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
 
-function updateHud(msg) {
-  hud.textContent = `${SOURCE} · trials this session: ${total} · unsaved: ${session.trials.length}` + (msg ? ` · ${msg}` : '');
+function pickKind() {
+  let r = Math.random() * MIX.reduce((s, [, w]) => s + w, 0);
+  for (const [kind, w] of MIX) if ((r -= w) < 0) return kind;
+  return MIX[0][0];
 }
 
-function placeTarget(fromX, fromY) {
-  const [w, h] = pick(SIZES);
+function updateHud(msg) {
+  hud.textContent = `${SOURCE} · trials this session: ${total} · unsaved: ${session.trials.length}` +
+    (task ? ` · ${INSTRUCTIONS[task.kind]}` : '') + (msg ? ` · ${msg}` : '');
+}
+
+function randomBox(w, h, fromX, fromY, minDist = 60, avoid = null) {
   const m = 20, top = 40;
   let x, y;
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 200; i++) {
     x = m + Math.random() * (innerWidth - w - 2 * m);
     y = top + Math.random() * (innerHeight - h - m - top);
-    if (Math.hypot(x + w / 2 - fromX, y + h / 2 - fromY) > 60) break;
+    const far = Math.hypot(x + w / 2 - fromX, y + h / 2 - fromY) > minDist;
+    const clear = !avoid || x + w < avoid[0] - 20 || x > avoid[0] + avoid[2] + 20 || y + h < avoid[1] - 20 || y > avoid[1] + avoid[3] + 20;
+    if (far && clear) break;
   }
-  Object.assign(target.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px', display: 'block' });
-  target.className = w === h ? 'circle' : '';
   return [x, y, w, h];
 }
 
-function startTrial(t, x, y) {
-  const box = placeTarget(x, y);
-  trial = { start: [x, y], target_box: box, target_size: [box[2], box[3]], events: [[t, x, y]], misses: [] };
+function show(el, [x, y, w, h]) {
+  Object.assign(el.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px', display: 'block' });
+}
+
+function hideAll() {
+  for (const el of [target, chip, zone, form, scroller]) el.style.display = 'none';
+  field.blur();
+  if (hotRow) {
+    hotRow.classList.remove('hot');
+    hotRow.textContent = `Item ${[...scroller.children].indexOf(hotRow) + 1}`;
+    hotRow = null;
+  }
+}
+
+function startPointing(t, x, y, el, box) {
+  aim = el;
+  trial = { kind: 'click', task: task.kind, start: [x, y], target_box: box, target_size: [box[2], box[3]], events: [[t, x, y]], misses: [] };
+}
+
+function nextTask(t, x, y) {
+  hideAll();
+  task = { kind: pickKind() };
+  if (task.kind === 'click') {
+    const [w, h] = pick(SIZES);
+    const box = randomBox(w, h, x, y);
+    show(target, box);
+    target.className = w === h ? 'circle' : '';
+    startPointing(t, x, y, target, box);
+  } else if (task.kind === 'drag') {
+    const s = 36 + Math.random() * 30, zs = s + 40 + Math.random() * 100;
+    const chipBox = randomBox(s, s, x, y);
+    const zoneBox = randomBox(zs, zs, chipBox[0] + s / 2, chipBox[1] + s / 2, 150, chipBox);
+    show(chip, chipBox);
+    show(zone, zoneBox);
+    Object.assign(task, { chip: chipBox, target_box: zoneBox, target_size: [zs, zs] });
+    startPointing(t, x, y, chip, chipBox);
+  } else if (task.kind === 'type') {
+    task.phrase = pick(PHRASES);
+    prompt.textContent = task.phrase;
+    field.value = '';
+    form.style.display = 'block';  // visible so it can be measured
+    const [fx, fy] = randomBox(form.offsetWidth, form.offsetHeight, x, y, 100);
+    Object.assign(form.style, { left: fx + 'px', top: fy + 'px' });
+    const r = field.getBoundingClientRect();
+    startPointing(t, x, y, field, [r.left, r.top, r.width, r.height]);
+  } else {
+    startScroll(t, x, y);
+  }
+  updateHud();
+}
+
+function startScroll(t, x, y) {
+  aim = null;
+  scroller.style.display = 'block';
+  const view = scroller.clientHeight, maxTop = scroller.scrollHeight - view;
+  let start = 0, row = 0;
+  for (let i = 0; i < 100; i++) {  // a row 400-6000 px away, up or down
+    start = Math.random() * maxTop;
+    const dist = Math.exp(Math.log(400) + Math.random() * Math.log(6000 / 400)) * (Math.random() < 0.5 ? -1 : 1);
+    row = Math.floor((start + view * (0.2 + 0.6 * Math.random()) + dist) / ROW_H);
+    if (row >= 0 && row < ROWS) break;
+  }
+  row = Math.min(Math.max(row, 0), ROWS - 1);
+  scroller.scrollTop = start;
+  hotRow = scroller.children[row];
+  hotRow.classList.add('hot');
+  hotRow.textContent = 'Click this row';
+  Object.assign(task, {
+    start: [x, y], events: [[t, x, y]], wheel: [], scroll: [[t, scroller.scrollTop]],
+    row_top: row * ROW_H, start_scroll: scroller.scrollTop, view_h: view, misses: [],
+  });
+}
+
+function commit(record) {
+  session.trials.push(record);
+  total++;
+  updateHud();
+  if (session.trials.length >= AUTOSAVE_EVERY) saveSession();
+}
+
+function finishTyping(t) {
+  Object.assign(task, { typed: field.value, end_t: t });
+  delete task.phase;
+  pendingResume = task;  // committed once the mouse moves again, with resume_ms
+  nextTask(t, ...pos);
 }
 
 function abort() {
-  trial = null;
-  target.style.display = 'none';
+  if (pendingResume) { session.trials.push(pendingResume); pendingResume = null; }
+  trial = task = aim = null;
+  hideAll();
   begin.style.display = 'block';
+  updateHud();
 }
 
 async function saveSession() {
+  if (pendingResume) { session.trials.push(pendingResume); pendingResume = null; }
   if (!session.trials.length) return { saved: null, trials: 0 };
   const payload = session;
   session = newSession();
@@ -91,40 +229,103 @@ async function saveSession() {
   }
 }
 window.saveSession = saveSession;
+window.currentTask = () => task && { kind: task.kind, phase: task.phase || null, phrase: task.phrase || null };
 
 addEventListener('pointermove', e => {
-  if (!trial || e.pointerType !== 'mouse') return;
+  if (e.pointerType !== 'mouse') return;
   const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
-  for (const c of (evs.length ? evs : [e])) trial.events.push([c.timeStamp, c.clientX, c.clientY]);
+  const pts = (evs.length ? evs : [e]).map(c => [c.timeStamp, c.clientX, c.clientY]);
+  pos = [e.clientX, e.clientY];
+  if (pendingResume) {
+    pendingResume.resume_ms = e.timeStamp - pendingResume.end_t;
+    const done = pendingResume;
+    pendingResume = null;
+    commit(done);
+  }
+  if (trial) {
+    trial.events.push(...pts);
+  } else if (task && task.phase === 'dragging') {
+    task.events.push(...pts);
+    Object.assign(chip.style, { left: e.clientX - task.grab[0] + 'px', top: e.clientY - task.grab[1] + 'px' });
+  } else if (task && (task.kind === 'scroll' || task.phase === 'typing')) {
+    task.events.push(...pts);
+  }
 });
 
 addEventListener('pointerdown', e => {
   if (e.pointerType !== 'mouse' || e.button !== 0) return;
+  const t = e.timeStamp, x = e.clientX, y = e.clientY;
   if (e.target === begin) {
     begin.style.display = 'none';
-    startTrial(e.timeStamp, e.clientX, e.clientY);
+    nextTask(t, x, y);
     return;
   }
-  if (e.target.id === 'save') { abort(); saveSession(); return; }
-  if (!trial) return;
-  if (e.target === target) {
-    trial.events.push([e.timeStamp, e.clientX, e.clientY]);
-    trial.click = [e.timeStamp, e.clientX, e.clientY];
-    session.trials.push(trial);
-    total++;
-    updateHud();
-    if (session.trials.length >= AUTOSAVE_EVERY) saveSession();
-    startTrial(e.timeStamp, e.clientX, e.clientY);
-  } else {
-    trial.misses.push([e.timeStamp, e.clientX, e.clientY]);
+  if (e.target === save) { abort(); saveSession(); return; }
+  if (trial) {
+    if (e.target !== aim) { trial.misses.push([t, x, y]); return; }
+    trial.events.push([t, x, y]);
+    trial.click = [t, x, y];
+    commit(trial);
+    trial = null;
+    if (task.kind === 'click') {
+      nextTask(t, x, y);
+    } else if (task.kind === 'drag') {
+      chip.setPointerCapture(e.pointerId);
+      Object.assign(task, { phase: 'dragging', start: [x, y], press: [t, x, y], events: [[t, x, y]], grab: [x - task.chip[0], y - task.chip[1]] });
+    } else if (task.kind === 'type') {
+      Object.assign(task, { phase: 'typing', focus: [t, x, y], keys: [], events: [] });
+    }
+    return;
+  }
+  if (task && task.kind === 'scroll') {
+    if (e.target !== hotRow) { task.misses.push([t, x, y]); return; }
+    task.events.push([t, x, y]);
+    task.click = [t, x, y];
+    commit(task);
+    nextTask(t, x, y);
   }
 });
 
-addEventListener('keydown', e => { if (e.key === 's' || e.key === 'S') saveSession(); });
-// Losing focus mid-trial produces unnatural paths; throw the trial away.
+addEventListener('pointerup', e => {
+  if (!task || task.phase !== 'dragging' || e.button !== 0) return;
+  const t = e.timeStamp, x = e.clientX, y = e.clientY, z = task.target_box;
+  task.events.push([t, x, y]);
+  task.release = [t, x, y];
+  const cx = x - task.grab[0] + task.chip[2] / 2, cy = y - task.grab[1] + task.chip[3] / 2;  // square's center
+  task.success = cx >= z[0] && cx <= z[0] + z[2] && cy >= z[1] && cy <= z[1] + z[3];
+  delete task.phase;
+  commit(task);
+  nextTask(t, x, y);
+});
+
+addEventListener('keydown', e => {
+  if (task && task.phase === 'typing' && e.target === field) {
+    if (e.repeat) return;
+    task.keys.push([e.timeStamp, 'down', e.key, e.code]);
+    if (e.key === 'Enter') finishTyping(e.timeStamp);
+    return;
+  }
+  if (e.target !== field && (e.key === 's' || e.key === 'S')) saveSession();
+});
+
+addEventListener('keyup', e => {
+  if (task && task.phase === 'typing' && e.target === field) task.keys.push([e.timeStamp, 'up', e.key, e.code]);
+});
+
+addEventListener('wheel', e => {
+  if (e.ctrlKey) e.preventDefault();  // trackpad pinch would zoom the page and break coordinates
+  if (task && task.kind === 'scroll') task.wheel.push([e.timeStamp, e.deltaX, e.deltaY, e.deltaMode, e.clientX, e.clientY]);
+}, { passive: false });
+
+scroller.addEventListener('scroll', () => {
+  if (task && task.kind === 'scroll') task.scroll.push([performance.now(), scroller.scrollTop]);
+});
+
+// Losing focus mid-trial produces unnatural data; throw the task away.
 addEventListener('blur', abort);
 document.addEventListener('visibilitychange', () => { if (document.hidden) abort(); });
 addEventListener('beforeunload', () => {
+  if (pendingResume) session.trials.push(pendingResume);
   if (session.trials.length) navigator.sendBeacon('/save', JSON.stringify(session));
 });
 updateHud();
