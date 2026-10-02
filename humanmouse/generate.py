@@ -1,11 +1,14 @@
 """Turn a trained checkpoint into screen-space mouse paths."""
 import math
+from pathlib import Path
 
 import numpy as np
 import torch
 
 from .data import MAX_STEPS, MIN_DIST_PX, condition_vector, uncanonicalize
 from .model import MouseMDN
+
+DEFAULT_MODEL = Path(__file__).parent / "assets" / "model.pt"  # SapiMouse, fine-tuned on one person
 
 
 def min_jerk(start, end, n):
@@ -23,8 +26,8 @@ def snap_endpoint(q):
 
 
 class PathGenerator:
-    def __init__(self, checkpoint, seed=None):
-        ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    def __init__(self, checkpoint=None, seed=None):
+        ckpt = torch.load(checkpoint or DEFAULT_MODEL, map_location="cpu", weights_only=False)
         self.model = MouseMDN(**ckpt["config"]).eval()
         self.model.load_state_dict(ckpt["model"])
         self.scale = torch.tensor(ckpt["stats"]["delta_scale"], dtype=torch.float32)

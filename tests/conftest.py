@@ -1,15 +1,14 @@
 import asyncio
-from pathlib import Path
 
 import pytest
 
-MODEL = Path(__file__).resolve().parent.parent / "checkpoints" / "model.pt"
+from humanmouse.generate import DEFAULT_MODEL as MODEL
 
 
 @pytest.fixture(scope="session")
 def generator():
     if not MODEL.exists():
-        pytest.skip("checkpoints/model.pt not found")
+        pytest.skip("bundled model not found")
     from humanmouse import PathGenerator
     return PathGenerator(str(MODEL), seed=0)
 

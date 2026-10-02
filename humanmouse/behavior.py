@@ -8,12 +8,14 @@ typical values for anything with too few recordings.
 import glob
 import json
 import math
+from pathlib import Path
 
 import numpy as np
 
 from .data import resample, trim_onset
 
 MIN_SAMPLES = 8
+DEFAULT_BEHAVIOR = Path(__file__).parent / "assets" / "behavior.json"  # the bundled recordings
 SHIFTED = set('~!@#$%^&*()_+{}|:"<>?')
 
 # Median ms (lognormal, sigma 0.35) used until there are recordings.

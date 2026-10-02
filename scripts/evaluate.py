@@ -41,7 +41,7 @@ def describe(name, paths, step_ms):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--ckpt", default="checkpoints/model.pt")
+    p.add_argument("--ckpt", help="trained model (default: the bundled one)")
     p.add_argument("--data", default="data/raw/*.json")
     p.add_argument("--compare", help="glob of recorded bot sessions to include")
     p.add_argument("--n", type=int, default=300)

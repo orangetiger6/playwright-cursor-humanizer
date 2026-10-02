@@ -5,8 +5,7 @@ them in Playwright: clicks, drags (kanban cards, sliders, color pickers), typing
 
 ## Quick start (included model)
 
-`checkpoints/model.pt` and `checkpoints/behavior.json` are ready to use, so you can try it without
-recording anything. The path model was pretrained on [SapiMouse](https://www.ms.sapientia.ro/~manyi/sapimouse/sapimouse.html)
+A trained model and timings ship inside the package, so you can use it without recording anything. The path model was pretrained on [SapiMouse](https://www.ms.sapientia.ro/~manyi/sapimouse/sapimouse.html)
 (Antal et al., 2021; 120 users) and fine-tuned on ~300 clicks from one person on a trackpad; the typing,
 drag and scroll timing comes from that same person. For movement that looks like *you*, record and train
 your own (below).
@@ -17,6 +16,35 @@ python -m playwright install chromium
 python scripts/demo.py --trials 20      # opens Chromium and performs the recorder tasks; watch the red cursor
 ```
 
+**Install size:** the path model runs on PyTorch. On Linux, `pip` pulls the CUDA build by default (several GB).
+Generation is CPU-only, so install the CPU wheel first (~200 MB):
+`pip install torch --index-url https://download.pytorch.org/whl/cpu`. Windows and macOS get a CPU build by default.
+
+**In your own script** (async):
+
+```python
+from humanmouse import HumanMouse
+
+human = HumanMouse(page)                       # bundled model and timings
+await human.click("button#submit")
+await human.type_into("input[name=q]", "hello world", submit=True)
+await human.drag("#card", "#done-column")
+```
+
+**With `sync_playwright`:**
+
+```python
+from humanmouse.sync_api import HumanMouse
+
+human = HumanMouse(page)
+human.click("button#submit")
+```
+
+Like `page.click`, the actions take a selector or a locator, wait for the element to be visible and stop
+moving, and scroll it into view first if needed. That includes elements inside scrolling lists, using
+trackpad flicks rather than a jump. Playwright doesn't expose where the cursor is, so `HumanMouse` tracks it.
+Use one `HumanMouse` per page, and pass `position=(x, y)` if the cursor isn't at the top-left corner.
+
 ```
 collect/            recorder page + tiny server (writes data/raw/*.json)
 humanmouse/
@@ -25,6 +53,8 @@ humanmouse/
   generate.py       PathGenerator: sample, snap endpoint, map back to screen coords
   behavior.py       drag / typing / trackpad-scroll timing: fitted from recordings, with defaults
   playwright_driver.py  HumanMouse: move_to / click / drag / type_into / scroll_to with real-time pacing
+  sync_api.py       the same HumanMouse for sync_playwright
+  assets/           the bundled model.pt and behavior.json
   metrics.py        kinematic metrics, Fitts' law fit, KS statistic
 scripts/
   make_synthetic.py hand-built fake data for smoke tests
@@ -110,7 +140,7 @@ dependence on width.
 
 ```bash
 python scripts/evaluate.py --ckpt checkpoints/model.pt --plot eval.png
-python scripts/demo.py --ckpt checkpoints/model.pt --trials 50
+python scripts/demo.py --ckpt checkpoints/model.pt --behavior checkpoints/behavior.json --trials 50
 python scripts/evaluate.py --ckpt checkpoints/model.pt --compare "data/bot/*.json"
 ```
 
@@ -125,6 +155,8 @@ KS columns near 0 mean the generated distribution matches yours. The `browser` c
 actually reached the page, which captures timing effects the model alone can't see.
 
 **5. Use it**
+
+Leave out `generator` and `behavior` to use the bundled ones. To use your own:
 
 ```python
 from humanmouse import Behavior, HumanMouse, PathGenerator
@@ -148,8 +180,9 @@ await mouse.scroll_to("#footer")               # trackpad flicks, re-checking af
 python -m pytest
 ```
 
-The browser tests drive real sliders, a color picker, an HTML5 drag-and-drop kanban board, a text field and a
-scrolling list in headless Chromium (about 45 s). They're skipped if Chromium or `checkpoints/model.pt` is missing.
+The browser tests run in headless Chromium (about a minute). They drive real sliders, a color picker, an
+HTML5 drag-and-drop kanban board, a text field, scrolling lists, off-screen and late-appearing elements, and
+the sync API. They're skipped if Chromium is missing.
 
 ## Knobs and next steps
 

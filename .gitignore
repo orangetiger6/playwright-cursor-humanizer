@@ -1,7 +1,5 @@
 data/
 checkpoints/*
-!checkpoints/model.pt
-!checkpoints/behavior.json
 __pycache__/
 *.egg-info/
 .pytest_cache/

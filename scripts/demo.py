@@ -10,7 +10,7 @@ cursor, and pulses on each click; keystrokes and scroll flicks show up in a smal
 beside it. It ignores pointer events, so it doesn't affect what the page records. Pass
 --no-cursor to hide it.
 
-    python scripts/demo.py --ckpt checkpoints/model.pt --trials 30
+    python scripts/demo.py --trials 30
     python scripts/demo.py --tasks click          # pointing only
 """
 import argparse
@@ -95,9 +95,7 @@ window.addEventListener("DOMContentLoaded", () => {
 async def run(args):
     server = serve_in_background(args.port)
     gen = PathGenerator(args.ckpt, seed=args.seed)
-    fit = args.behavior if Path(args.behavior).exists() else None
-    behavior = Behavior(fit, rng=gen.rng)
-    print(f"behavior: {fit or 'built-in defaults'}")
+    behavior = Behavior(args.behavior, rng=gen.rng) if args.behavior else None  # None: the bundled timings
     try:
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=args.headless)
@@ -129,10 +127,10 @@ async def run(args):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--ckpt", default="checkpoints/model.pt")
+    p.add_argument("--ckpt", help="trained model (default: the bundled one)")
     p.add_argument("--trials", type=int, default=30, help="number of tasks")
     p.add_argument("--tasks", default="click,drag,type,scroll", help="comma-separated mix of recorder tasks")
-    p.add_argument("--behavior", default="checkpoints/behavior.json", help="from fit_behavior.py; defaults if missing")
+    p.add_argument("--behavior", help="from fit_behavior.py (default: the bundled timings)")
     p.add_argument("--temperature", type=float, default=0.8)
     p.add_argument("--port", type=int, default=8766)
     p.add_argument("--seed", type=int)

@@ -18,5 +18,8 @@ test = ["pytest>=8"]
 [tool.setuptools]
 packages = ["humanmouse"]
 
+[tool.setuptools.package-data]
+humanmouse = ["assets/model.pt", "assets/behavior.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

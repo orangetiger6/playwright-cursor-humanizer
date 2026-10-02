@@ -4,20 +4,53 @@ import time
 
 import numpy as np
 
-from .behavior import SHIFTED, Behavior
+from .behavior import DEFAULT_BEHAVIOR, SHIFTED, Behavior
 from .generate import PathGenerator
 
 
+# Insets (left, top, right, bottom) of the part of an element not cut off by overflow-clipping
+# ancestors or the viewport, so clicks only aim at what a person could actually see.
+VISIBLE_INSETS_JS = """e => {
+  const b = e.getBoundingClientRect();
+  let l = b.left, t = b.top, r = b.right, bt = b.bottom;
+  for (let p = e.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+    const s = getComputedStyle(p), c = p.getBoundingClientRect();
+    const x0 = c.left + p.clientLeft, y0 = c.top + p.clientTop;
+    if (s.overflowX !== 'visible') { l = Math.max(l, x0); r = Math.min(r, x0 + p.clientWidth); }
+    if (s.overflowY !== 'visible') { t = Math.max(t, y0); bt = Math.min(bt, y0 + p.clientHeight); }
+  }
+  l = Math.max(l, 0); t = Math.max(t, 0); r = Math.min(r, innerWidth); bt = Math.min(bt, innerHeight);
+  return [l - b.left, t - b.top, b.right - r, b.bottom - bt];
+}"""
+
+# The nearest scrollable ancestor that hides part of the element vertically, or null (= the page).
+CLIPPING_SCROLLER_JS = """e => {
+  const b = e.getBoundingClientRect();
+  for (let p = e.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+    const oy = getComputedStyle(p).overflowY;
+    if ((oy === 'auto' || oy === 'scroll') && p.scrollHeight > p.clientHeight) {
+      const c = p.getBoundingClientRect(), y0 = c.top + p.clientTop;
+      if (b.top < y0 || b.bottom > y0 + p.clientHeight) return p;
+    }
+  }
+  return null;
+}"""
+
+
 class HumanMouse:
-    def __init__(self, page, generator: PathGenerator, position=(0.0, 0.0), temperature=0.8, timing_jitter_ms=1.5,
-                 behavior: Behavior = None):
+    def __init__(self, page, generator: PathGenerator = None, position=(0.0, 0.0), temperature=0.8,
+                 timing_jitter_ms=1.5, behavior: Behavior = None):
+        """`generator` and `behavior` default to the bundled model and recorded timings."""
         self.page = page
-        self.gen = generator
+        self.gen = generator or PathGenerator()
         self.position = tuple(position)  # Playwright doesn't expose the cursor position, so track it
         self.temperature = temperature
         self.jitter = timing_jitter_ms
-        self.behavior = behavior or Behavior(rng=generator.rng)
+        self.behavior = behavior or Behavior(DEFAULT_BEHAVIOR if DEFAULT_BEHAVIOR.exists() else None, rng=self.gen.rng)
         self._resume_at = 0.0  # after typing, the hand needs time to get back to the mouse
+
+    async def _sleep(self, seconds):  # the sync API swaps in a blocking sleep
+        await asyncio.sleep(seconds)
 
     async def _play(self, times_ms, step):
         """Call `step(lo, hi)` on a real-time schedule until every index 1..n-1 is covered. Usually
@@ -30,7 +63,7 @@ class HumanMouse:
             lo = i
             delay = t0 + due[i] / 1000 - time.perf_counter()
             if delay > 0:
-                await asyncio.sleep(delay)
+                await self._sleep(delay)
             else:
                 now_ms = (time.perf_counter() - t0) * 1000
                 while i + 1 < len(due) and due[i + 1] <= now_ms:
@@ -39,7 +72,7 @@ class HumanMouse:
             i += 1
 
     async def _pause(self, name):
-        await asyncio.sleep(self.behavior.ms(name) / 1000)
+        await self._sleep(self.behavior.ms(name) / 1000)
 
     async def move_to(self, x, y, target_width=20.0, time_scale=1.0, not_before=0.0):
         """Move along a generated path. Generation takes real time (~0.1-0.3 s on CPU), so it
@@ -49,7 +82,7 @@ class HumanMouse:
         wait = max(self._resume_at, not_before) - time.perf_counter()
         self._resume_at = 0.0
         if wait > 0:
-            await asyncio.sleep(wait)
+            await self._sleep(wait)
 
         async def step(lo, i):  # only the latest position matters
             await self.page.mouse.move(float(pts[i, 0]), float(pts[i, 1]))
@@ -57,11 +90,60 @@ class HumanMouse:
         await self._play(times * time_scale, step)
         self.position = (float(pts[-1, 0]), float(pts[-1, 1]))
 
-    async def _box(self, target):
-        locator = self.page.locator(target) if isinstance(target, str) else target
-        box = await locator.bounding_box()
+    def _locator(self, target):
+        return self.page.locator(target) if isinstance(target, str) else target
+
+    async def _raw_box(self, target):
+        box = await self._locator(target).bounding_box()
         if box is None:
             raise ValueError(f"element not visible: {target}")
+        return box["x"], box["y"], box["width"], box["height"]
+
+    async def _stable_box(self, loc, tries=20):
+        """Bounding box once it stops changing (animations, late layout), like Playwright's checks."""
+        prev = None
+        for _ in range(tries):
+            box = await loc.bounding_box()
+            if box is not None and box == prev:
+                break
+            prev = box
+            await self._sleep(0.03)
+        if prev is None:
+            raise ValueError("element not visible")
+        return prev
+
+    async def _visible_part(self, loc, box):
+        il, it, ir, ib = await loc.evaluate(VISIBLE_INSETS_JS)
+        x, y, w, h = box["x"] + il, box["y"] + it, box["width"] - il - ir, box["height"] - it - ib
+        vp = self.page.viewport_size
+        if vp:  # elements in iframes are also clipped by the page's viewport
+            x2, y2 = min(x + w, vp["width"]), min(y + h, vp["height"])
+            x, y = max(x, 0.0), max(y, 0.0)
+            w, h = x2 - x, y2 - y
+        return (x, y, w, h) if w > 1 and h > 1 else None
+
+    async def _box(self, target, visible_only=True):
+        """Wait for an element like page.click does (visible, then stable), flick-scroll it into
+        view if it's (mostly) hidden, and return its box: the whole box, or with `visible_only`
+        just the part that can be seen and clicked."""
+        loc = self._locator(target)
+        if hasattr(loc, "wait_for"):  # locators; element handles are already attached
+            await loc.wait_for(state="visible")
+        box = await self._stable_box(loc)
+        vis = await self._visible_part(loc, box)
+        if vis is None or vis[2] * vis[3] < 0.9 * box["width"] * box["height"]:
+            scroller = await loc.evaluate_handle(CLIPPING_SCROLLER_JS)
+            if await scroller.evaluate("p => p !== null"):
+                await self._box(scroller)  # the scrolling container itself may be off-screen
+                await self.scroll_to(loc, container=scroller)
+            else:
+                await self.scroll_to(loc)
+            box = await self._stable_box(loc)
+            vis = await self._visible_part(loc, box)
+            if vis is None:
+                raise ValueError(f"could not bring element into view: {target}")
+        if visible_only:
+            return vis
         return box["x"], box["y"], box["width"], box["height"]
 
     async def click(self, target, button="left"):
@@ -69,9 +151,9 @@ class HumanMouse:
         x, y, w, h = await self._box(target)
         await self.move_to(*self.gen.point_in_box(x, y, w, h), min(w, h))
         rng = self.gen.rng
-        await asyncio.sleep(rng.uniform(0.04, 0.12))
+        await self._sleep(rng.uniform(0.04, 0.12))
         await self.page.mouse.down(button=button)
-        await asyncio.sleep(rng.uniform(0.05, 0.11))
+        await self._sleep(rng.uniform(0.05, 0.11))
         await self.page.mouse.up(button=button)
 
     async def drag(self, source, target, precision=None):
@@ -91,7 +173,7 @@ class HumanMouse:
             sx, sy, sw, sh = await self._box(source)
             await self.move_to(*self.gen.point_in_box(sx, sy, sw, sh), min(sw, sh))
             grab = (self.position[0] - (sx + sw / 2), self.position[1] - (sy + sh / 2))
-        await asyncio.sleep(self.gen.rng.uniform(0.04, 0.12))
+        await self._sleep(self.gen.rng.uniform(0.04, 0.12))
         await self.page.mouse.down()
         start_at = time.perf_counter() + self.behavior.ms("drag_press_ms") / 1000
         if isinstance(target, tuple):
@@ -107,7 +189,7 @@ class HumanMouse:
     async def point_at(self, target, fx, fy):
         """Page point at fraction (fx, fy) of an element's box, e.g. a spot in a color picker's
         saturation/brightness square: point_at("#sv", saturation, 1 - brightness)."""
-        x, y, w, h = await self._box(target)
+        x, y, w, h = await self._box(target, visible_only=False)
         return x + fx * w, y + fy * h
 
     async def set_slider(self, slider, value=None, fraction=None, handle=None, thumb_px=16.0, max_corrections=2):
@@ -120,8 +202,8 @@ class HumanMouse:
         as 0..1). There's no generic way to read those back, so there are no corrections.
         Custom sliders are vertical if the track is taller than wide (then 0 = bottom)."""
         rng = self.gen.rng
-        loc = self.page.locator(slider) if isinstance(slider, str) else slider
-        x, y, w, h = await self._box(loc)
+        loc = self._locator(slider)
+        x, y, w, h = await self._box(loc, visible_only=False)
         vertical = handle is not None and h > w
         start, length = (y + h, -h) if vertical else (x, w)  # axis origin and signed length at 0
 
@@ -148,14 +230,14 @@ class HumanMouse:
                 got = float(await loc.input_value())
                 if abs(got - want) <= tol:
                     break
-                await asyncio.sleep(rng.uniform(0.2, 0.5))  # notice the value is off
+                await self._sleep(rng.uniform(0.2, 0.5))  # notice the value is off
                 err = (want - got) * px_per_unit * (1 if length > 0 else -1)
                 px, py = self.position
                 await self.drag((px, py), point((py if vertical else px) + err, (px if vertical else py)), precision=4.0)
             return float(await loc.input_value())
 
         fraction = value if fraction is None else fraction
-        hx, hy, hw, hh = await self._box(handle)
+        hx, hy, hw, hh = await self._box(handle, visible_only=False)
         grab = self.gen.point_in_box(hx, hy, hw, hh)
         handle_axis = (hy + hh / 2) if vertical else (hx + hw / 2)
         shift = to_px(fraction, 0.0) - handle_axis  # custom handles' centers usually span the whole track
@@ -224,7 +306,7 @@ class HumanMouse:
         like a person watching the page), with the cursor over `container` (default: the page)."""
         rng = self.gen.rng
         if container is not None:
-            cx, cy, cw, ch = await self._box(container)
+            cx, cy, cw, ch = await self._raw_box(container)
         else:
             vp = self.page.viewport_size
             cx, cy, cw, ch = 0, 0, vp["width"], vp["height"]
@@ -233,8 +315,7 @@ class HumanMouse:
             await self.move_to(*self.gen.point_in_box(cx, cy, cw, ch), min(cw, ch))
         goal = rng.uniform(0.3, 0.6)
         for _ in range(max_flicks):
-            locator = self.page.locator(target) if isinstance(target, str) else target
-            box = await locator.bounding_box()
+            box = await self._locator(target).bounding_box()
             if box is None:
                 raise ValueError(f"element not found: {target}")
             center = box["y"] + box["height"] / 2

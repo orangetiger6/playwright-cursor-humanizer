@@ -1,4 +1,6 @@
 """End to end: each HumanMouse action against real page widgets in headless Chromium."""
+import pytest
+
 from humanmouse import HumanMouse
 
 WIDGETS = """<style>#fat{-webkit-appearance:none;height:8px}
@@ -80,3 +82,49 @@ def test_scroll_to_row(generator, run_page):
         return box["y"] + box["height"] / 2
     center = run_page(SCROLLER, fn)
     assert 0.15 * 400 < center < 0.85 * 400
+
+
+TALL = """<body style="margin:0"><div style="height:2500px"></div>
+<button id=far onclick="this.textContent='clicked'">far</button>
+<div style="height:300px;width:400px;overflow:auto" id=list>""" + "".join(
+    f'<div id="item{i}" style="height:40px" onclick="window.picked={i}">item {i}</div>' for i in range(100)) + """
+</div><div style="height:1500px"></div></body>"""
+
+
+def test_click_scrolls_off_screen_targets_into_view(generator, run_page):
+    async def fn(page):
+        m = HumanMouse(page, generator, position=(500, 300))
+        await m.click("#far")  # below the fold: the page is flick-scrolled first
+        await m.click("#item80")  # inside a scrolling list that is itself off-screen
+        return await page.evaluate("[far.textContent, window.picked, scrollY > 0]")
+    assert run_page(TALL, fn) == ["clicked", 80, True]
+
+
+def test_waits_for_late_elements(generator, run_page):
+    late = """<body><script>setTimeout(() => document.body.insertAdjacentHTML('beforeend',
+      '<button id=late onclick="this.textContent=1">late</button>'), 500)</script></body>"""
+
+    async def fn(page):
+        await HumanMouse(page, generator, position=(300, 300)).click("#late")
+        return await page.locator("#late").text_content()
+    assert run_page(late, fn) == "1"
+
+
+def test_sync_api_with_bundled_defaults():
+    sync_api = pytest.importorskip("playwright.sync_api")
+    from humanmouse.sync_api import HumanMouse as SyncHumanMouse
+
+    with sync_api.sync_playwright() as p:
+        try:
+            browser = p.chromium.launch()
+        except Exception as e:
+            pytest.skip(f"Chromium not available: {e}")
+        page = browser.new_page(viewport={"width": 1000, "height": 700})
+        page.set_content(WIDGETS)
+        human = SyncHumanMouse(page, position=(500, 650))  # bundled model and timings
+        human.type_into(page.locator("#field"), "Sync works")
+        value = human.set_slider("#r1", 30)
+        human.drag("#card", "#done")
+        result = [page.locator("#field").input_value(), value, page.evaluate("card.parentElement.id")]
+        browser.close()
+    assert result == ["Sync works", 30, "done"]
