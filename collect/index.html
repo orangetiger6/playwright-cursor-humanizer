@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mouse Recorder</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #f6f5f2; font-family: system-ui, sans-serif; user-select: none; }
+  #hud { position: fixed; top: 8px; left: 12px; font-size: 13px; color: #555; pointer-events: none; }
+  #save { position: fixed; top: 6px; right: 10px; font-size: 13px; }
+  #target { position: absolute; display: none; background: #2f6fde; border-radius: 6px; }
+  #target.circle { border-radius: 50%; }
+  #begin { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 14px 28px; font-size: 16px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="hud"></div>
+<button id="save" title="Shortcut: S">Save</button>
+<button id="begin">Begin</button>
+<div id="target"></div>
+<script>
+// Records mouse trajectories between successive target clicks.
+// Each trial starts at the previous click and ends at the press on the next target.
+const params = new URLSearchParams(location.search);
+const SOURCE = (params.get('source') || 'human').replace(/[^a-z0-9_-]/gi, '');
+const AUTOSAVE_EVERY = 25;
+// [width, height] — circles/icons plus button- and link-shaped rectangles.
+const SIZES = [[12,12],[16,16],[24,24],[36,36],[56,56],[80,80],[60,20],[90,28],[140,36],[220,44]];
+
+const target = document.getElementById('target');
+const begin = document.getElementById('begin');
+const hud = document.getElementById('hud');
+let session = newSession();
+let trial = null;
+let total = 0;
+
+function newSession() {
+  return {
+    source: SOURCE,
+    created: new Date().toISOString(),
+    user_agent: navigator.userAgent,
+    device_pixel_ratio: devicePixelRatio,
+    viewport: [innerWidth, innerHeight],
+    trials: [],
+  };
+}
+
+function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
+
+function updateHud(msg) {
+  hud.textContent = `${SOURCE} · trials this session: ${total} · unsaved: ${session.trials.length}` + (msg ? ` · ${msg}` : '');
+}
+
+function placeTarget(fromX, fromY) {
+  const [w, h] = pick(SIZES);
+  const m = 20, top = 40;
+  let x, y;
+  for (let i = 0; i < 100; i++) {
+    x = m + Math.random() * (innerWidth - w - 2 * m);
+    y = top + Math.random() * (innerHeight - h - m - top);
+    if (Math.hypot(x + w / 2 - fromX, y + h / 2 - fromY) > 60) break;
+  }
+  Object.assign(target.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px', display: 'block' });
+  target.className = w === h ? 'circle' : '';
+  return [x, y, w, h];
+}
+
+function startTrial(t, x, y) {
+  const box = placeTarget(x, y);
+  trial = { start: [x, y], target_box: box, target_size: [box[2], box[3]], events: [[t, x, y]], misses: [] };
+}
+
+function abort() {
+  trial = null;
+  target.style.display = 'none';
+  begin.style.display = 'block';
+}
+
+async function saveSession() {
+  if (!session.trials.length) return { saved: null, trials: 0 };
+  const payload = session;
+  session = newSession();
+  try {
+    const res = await fetch('/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const out = await res.json();
+    updateHud(`saved ${out.saved}`);
+    return out;
+  } catch (err) {
+    session.trials = payload.trials.concat(session.trials);  // keep data if the save failed
+    updateHud('SAVE FAILED — is server.py running?');
+    throw err;
+  }
+}
+window.saveSession = saveSession;
+
+addEventListener('pointermove', e => {
+  if (!trial || e.pointerType !== 'mouse') return;
+  const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+  for (const c of (evs.length ? evs : [e])) trial.events.push([c.timeStamp, c.clientX, c.clientY]);
+});
+
+addEventListener('pointerdown', e => {
+  if (e.pointerType !== 'mouse' || e.button !== 0) return;
+  if (e.target === begin) {
+    begin.style.display = 'none';
+    startTrial(e.timeStamp, e.clientX, e.clientY);
+    return;
+  }
+  if (e.target.id === 'save') { abort(); saveSession(); return; }
+  if (!trial) return;
+  if (e.target === target) {
+    trial.events.push([e.timeStamp, e.clientX, e.clientY]);
+    trial.click = [e.timeStamp, e.clientX, e.clientY];
+    session.trials.push(trial);
+    total++;
+    updateHud();
+    if (session.trials.length >= AUTOSAVE_EVERY) saveSession();
+    startTrial(e.timeStamp, e.clientX, e.clientY);
+  } else {
+    trial.misses.push([e.timeStamp, e.clientX, e.clientY]);
+  }
+});
+
+addEventListener('keydown', e => { if (e.key === 's' || e.key === 'S') saveSession(); });
+// Losing focus mid-trial produces unnatural paths; throw the trial away.
+addEventListener('blur', abort);
+document.addEventListener('visibilitychange', () => { if (document.hidden) abort(); });
+addEventListener('beforeunload', () => {
+  if (session.trials.length) navigator.sendBeacon('/save', JSON.stringify(session));
+});
+updateHud();
+</script>
+</body>
+</html>

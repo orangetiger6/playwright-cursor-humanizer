@@ -1,0 +1,4 @@
+torch>=2.2
+numpy>=1.26
+playwright>=1.40
+matplotlib>=3.8
