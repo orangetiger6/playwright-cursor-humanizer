@@ -15,7 +15,7 @@ WIDGETS = """<style>#fat{-webkit-appearance:none;height:8px}
 <div id=todo class=col style="position:absolute;left:560px;top:300px;width:180px;height:150px;background:#eee">
   <div id=card draggable=true style="margin:10px;height:40px;background:#fc0">card</div></div>
 <div id=done class=col style="position:absolute;left:560px;top:500px;width:180px;height:150px;background:#dfd"></div>
-<input id=field style="position:absolute;left:100px;top:600px;width:300px">
+<button id=far onclick="this.textContent='clicked'" style="position:absolute;left:100px;top:1200px">far</button>
 <script>
 let d = null;
 knob.onmousedown = e => { d = e.clientY - knob.getBoundingClientRect().top - 10 };
@@ -62,16 +62,6 @@ def test_custom_slider_color_picker_and_kanban(generator, run_page):
     assert abs(frac - 0.75) < 0.01
     assert pick == [160, 50]
     assert column == "done"
-
-
-def test_typing_is_exact(generator, run_page):
-    text = "Hello, World! #42 abc"
-
-    async def fn(page):
-        m = HumanMouse(page, generator, position=(500, 400))
-        await m.type_into("#field", text)
-        return await page.locator("#field").input_value()
-    assert run_page(WIDGETS, fn) == text
 
 
 def test_scroll_to_row(generator, run_page):
@@ -122,9 +112,9 @@ def test_sync_api_with_bundled_defaults():
         page = browser.new_page(viewport={"width": 1000, "height": 700})
         page.set_content(WIDGETS)
         human = SyncHumanMouse(page, position=(500, 650))  # bundled model and timings
-        human.type_into(page.locator("#field"), "Sync works")
-        value = human.set_slider("#r1", 30)
+        human.click("#far")
+        value = human.set_slider(page.locator("#r1"), 30)  # locators work as well as selectors
         human.drag("#card", "#done")
-        result = [page.locator("#field").input_value(), value, page.evaluate("card.parentElement.id")]
+        result = [page.locator("#far").text_content(), value, page.evaluate("card.parentElement.id")]
         browser.close()
-    assert result == ["Sync works", 30, "done"]
+    assert result == ["clicked", 30, "done"]

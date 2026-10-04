@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "humanmouse"
 version = "0.1.0"
-description = "Learn human mouse movement, typing and scrolling from recordings and replay it in Playwright"
+description = "Learn human cursor movement, dragging and scrolling from recordings and replay it in Playwright"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"

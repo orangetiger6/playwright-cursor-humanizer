@@ -1,12 +1,12 @@
 """Let the trained model do the recorder tasks in a real browser.
 
-Starts the local recorder server, opens it with ?source=bot, and does the click, drag,
-type and scroll tasks with HumanMouse (--tasks picks which). The page records the
+Starts the local recorder server, opens it with ?source=bot, and does the click, drag
+and scroll tasks with HumanMouse (--tasks picks which). The page records the
 resulting events exactly as it does for a person, into data/bot/, so you can run evaluate.py --compare "data/bot/*.json"
 to check what actually reached the browser.
 
 A red dot with a fading trail shows where the model is moving the (invisible) automated
-cursor, and pulses on each click; keystrokes and scroll flicks show up in a small label
+cursor, and pulses on each click; scroll flicks show up in a small label
 beside it. It ignores pointer events, so it doesn't affect what the page records. Pass
 --no-cursor to hide it.
 
@@ -46,7 +46,6 @@ window.addEventListener("DOMContentLoaded", () => {
     clearTimeout(labelTimer);
     labelTimer = setTimeout(() => { label.style.opacity = "0"; labelText = ""; scrollSum = 0; }, 700);
   };
-  addEventListener("keydown", e => say(e.key === " " ? "␣" : e.key.length === 1 ? e.key : `[${e.key}]`, true), true);
   addEventListener("wheel", e => {
     scrollSum += e.deltaY;
     say(`${scrollSum > 0 ? "↓" : "↑"} scroll ${Math.abs(Math.round(scrollSum))}px`);
@@ -111,8 +110,6 @@ async def run(args):
                 task = await page.evaluate("window.currentTask()")
                 if task["kind"] == "drag":
                     await mouse.drag("#chip", "#zone")
-                elif task["kind"] == "type":
-                    await mouse.type_into("#field", task["phrase"], submit=True)
                 elif task["kind"] == "scroll":
                     await mouse.scroll_to(".row.hot", container="#scroller")
                     await mouse.click(".row.hot")
@@ -129,7 +126,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--ckpt", help="trained model (default: the bundled one)")
     p.add_argument("--trials", type=int, default=30, help="number of tasks")
-    p.add_argument("--tasks", default="click,drag,type,scroll", help="comma-separated mix of recorder tasks")
+    p.add_argument("--tasks", default="click,drag,scroll", help="comma-separated mix of recorder tasks")
     p.add_argument("--behavior", help="from fit_behavior.py (default: the bundled timings)")
     p.add_argument("--temperature", type=float, default=0.8)
     p.add_argument("--port", type=int, default=8766)

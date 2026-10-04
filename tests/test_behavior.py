@@ -1,15 +1,7 @@
 import numpy as np
 import pytest
 
-from humanmouse.behavior import DEFAULT_MEDIANS, Behavior, fit_behavior, gap_kind, split_gestures, synthetic_gesture
-
-
-@pytest.mark.parametrize("prev, ch, kind", [
-    ("a", " ", "space"), (" ", "b", "word"), ("a", "B", "shift"), ("a", "!", "shift"),
-    ("a", ",", "punct"), ("a", "b", "char"), ("1", "2", "char"),
-])
-def test_gap_kind(prev, ch, kind):
-    assert gap_kind(prev, ch) == kind
+from humanmouse.behavior import DEFAULT_MEDIANS, Behavior, split_gestures, synthetic_gesture
 
 
 def test_defaults_are_positive_and_near_median():
@@ -41,14 +33,3 @@ def test_split_gestures_on_pauses():
     assert all(np.array(g)[:, 2].sum() > 0 for g in gestures)  # made positive
     assert pauses[0] == pytest.approx(600 - 192)
 
-
-def test_fit_behavior_from_typing():
-    keys, t = [], 1000.0
-    for ch in "hello world":
-        keys += [[t, "down", ch, f"Key{ch}"], [t + 90, "up", ch, f"Key{ch}"]]
-        t += 150
-    task = {"kind": "type", "focus": [500.0, 0, 0], "keys": keys, "resume_ms": 600}
-    s = fit_behavior([task] * 3)["samples"]
-    assert s["homing_ms"] == [500.0] * 3
-    assert set(s["hold_ms"]) == {90.0} and set(s["gap_char_ms"]) == {150.0}
-    assert len(s["gap_space_ms"]) == 3 and len(s["gap_word_ms"]) == 3

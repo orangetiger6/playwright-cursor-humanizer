@@ -1,13 +1,13 @@
 # humanmouse
 
-Learn human mouse movement, typing and trackpad scrolling from your own recordings and replay
-them in Playwright: clicks, drags (kanban cards, sliders, color pickers), typing and scrolling.
+Learn human cursor movement, dragging and trackpad scrolling from your own recordings and replay
+them in Playwright: clicks, drags (kanban cards, sliders, color pickers) and scrolling.
 
 ## Quick start (included model)
 
 A trained model and timings ship inside the package, so you can use it without recording anything. The path model was pretrained on [SapiMouse](https://www.ms.sapientia.ro/~manyi/sapimouse/sapimouse.html)
-(Antal et al., 2021; 120 users) and fine-tuned on ~300 clicks from one person on a trackpad; the typing,
-drag and scroll timing comes from that same person. For movement that looks like *you*, record and train
+(Antal et al., 2021; 120 users) and fine-tuned on ~300 clicks from one person on a trackpad; the drag
+and scroll timing comes from that same person. For movement that looks like *you*, record and train
 your own (below).
 
 ```bash
@@ -27,7 +27,6 @@ from humanmouse import HumanMouse
 
 human = HumanMouse(page)                       # bundled model and timings
 await human.click("button#submit")
-await human.type_into("input[name=q]", "hello world", submit=True)
 await human.drag("#card", "#done-column")
 ```
 
@@ -51,8 +50,8 @@ humanmouse/
   data.py           resample → trim → canonical frame (start (0,0), target (1,0)) + condition vector
   model.py          GRU + bivariate Gaussian mixture density head (Graves 2013), end-of-movement flag
   generate.py       PathGenerator: sample, snap endpoint, map back to screen coords
-  behavior.py       drag / typing / trackpad-scroll timing: fitted from recordings, with defaults
-  playwright_driver.py  HumanMouse: move_to / click / drag / type_into / scroll_to with real-time pacing
+  behavior.py       drag and trackpad-scroll timing: fitted from recordings, with defaults
+  playwright_driver.py  HumanMouse: move_to / click / drag / set_slider / scroll_to with real-time pacing
   sync_api.py       the same HumanMouse for sync_playwright
   assets/           the bundled model.pt and behavior.json
   metrics.py        kinematic metrics, Fitts' law fit, KS statistic
@@ -61,7 +60,7 @@ scripts/
   import_public.py  SapiMouse / BOUN / Balabit CSV logs → trial JSON
   train.py          training loop
   evaluate.py       real vs generated vs in-browser comparison (+ plots)
-  fit_behavior.py   drag / type / scroll recordings → checkpoints/behavior.json
+  fit_behavior.py   drag / scroll recordings → checkpoints/behavior.json
   demo.py           model performs the recorder task in Chromium, recorded to data/bot/
 tests/              unit tests + headless-Chromium tests of every action (pytest)
 ```
@@ -92,9 +91,8 @@ python collect/server.py
 ```
 
 Open http://127.0.0.1:8765, click **Begin**, then follow the instruction in the top bar. Most tasks are
-"click the blue target"; mixed in are drags (orange square into the dashed box), typing (click the field,
-type the phrase, Enter) and scrolling (scroll the list to the blue row and click it). Saves every 25
-trials (or press `S`). `?tasks=scroll,type` limits the mix. Tips:
+"click the blue target"; mixed in are drags (orange square into the dashed box) and scrolling (scroll the list to the blue
+row and click it). Saves every 25 trials (or press `S`). `?tasks=drag,scroll` limits the mix. Tips:
 - Aim for 1,500+ trials across several sessions and days. Short sessions keep the data free of fatigue.
 - Record on the same mouse, OS pointer speed and screen scaling that you want to reproduce.
 - Work at a normal pace. Don't try to be fast or careful; the goal is ordinary behavior.
@@ -144,8 +142,7 @@ python scripts/demo.py --ckpt checkpoints/model.pt --behavior checkpoints/behavi
 python scripts/evaluate.py --ckpt checkpoints/model.pt --compare "data/bot/*.json"
 ```
 
-For drags, typing and scrolling, the model isn't needed: their pauses, keystroke rhythm and trackpad
-flicks are sampled from your recordings (anything with fewer than 8 samples uses built-in defaults).
+For drags and scrolling, the model isn't needed: their pauses and trackpad flicks are sampled from your recordings (anything with fewer than 8 samples uses built-in defaults).
 
 ```bash
 python scripts/fit_behavior.py --data "data/raw/*.json"      # -> checkpoints/behavior.json
@@ -170,7 +167,6 @@ await mouse.drag((x0, y), (x1, y))            # exact points: press here, releas
 await mouse.set_slider("#volume", 70)          # <input type=range>: reads back and nudges if off
 await mouse.set_slider("#track", fraction=0.3, handle="#knob")   # custom (div) slider
 await mouse.drag(await mouse.point_at("#sv", 0.1, 0.9), await mouse.point_at("#sv", 0.8, 0.2))  # color picker
-await mouse.type_into("input[name=q]", "hello world", submit=True)
 await mouse.scroll_to("#footer")               # trackpad flicks, re-checking after each
 ```
 
@@ -181,14 +177,14 @@ python -m pytest
 ```
 
 The browser tests run in headless Chromium (about a minute). They drive real sliders, a color picker, an
-HTML5 drag-and-drop kanban board, a text field, scrolling lists, off-screen and late-appearing elements, and
+HTML5 drag-and-drop kanban board, scrolling lists, off-screen and late-appearing elements, and
 the sync API. They're skipped if Chromium is missing.
 
 ## Knobs and next steps
 
 - `temperature` (default 0.8): lower values give smoother, more stereotyped paths; higher values give more variety and wobble.
 - Hold out a whole recording session for validation instead of random trials to measure generalization honestly.
-- Ideas: condition on a per-user/session embedding; typing mistakes and corrections; model the idle
+- Ideas: condition on a per-user/session embedding; model the idle
   drift between actions; replace the GRU with a small transformer once you have >10k trials.
 
 Use this responsibly: for testing your own apps, UX/accessibility research, and demos, within the terms of the sites you automate.

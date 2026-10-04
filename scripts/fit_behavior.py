@@ -1,4 +1,4 @@
-"""Fit drag / typing / scroll timing from recorder sessions.
+"""Fit drag and scroll timing from recorder sessions.
 
     python scripts/fit_behavior.py --data "data/raw/*.json" --out checkpoints/behavior.json
 
@@ -25,7 +25,7 @@ def main():
 
     tasks = load_tasks(args.data)
     fit = fit_behavior(tasks, load_trials(args.data))
-    kinds = {k: sum(t["kind"] == k for t in tasks) for k in ("drag", "type", "scroll")}
+    kinds = {k: sum(t["kind"] == k for t in tasks) for k in ("drag", "scroll")}
     print("recorded tasks: " + ", ".join(f"{k} {n}" for k, n in kinds.items()))
     print(f"\n{'timing':<18}{'n':>6}{'median ms':>12}{'default':>10}")
     for name, default in DEFAULT_MEDIANS.items():

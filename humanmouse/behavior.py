@@ -1,7 +1,7 @@
-"""Timing and scroll behavior for drags, typing and trackpad scrolling.
+"""Timing and scroll behavior for drags and trackpad scrolling.
 
-These don't need a neural model: a person's press/settle pauses, keystroke rhythm and
-scroll flicks are well described by their empirical distributions. `fit_behavior` turns
+These don't need a neural model: a person's press/settle pauses and scroll flicks are
+well described by their empirical distributions. `fit_behavior` turns
 recorder sessions into a small JSON of samples; `Behavior` draws from it, falling back to
 typical values for anything with too few recordings.
 """
@@ -16,36 +16,15 @@ from .data import resample, trim_onset
 
 MIN_SAMPLES = 8
 DEFAULT_BEHAVIOR = Path(__file__).parent / "assets" / "behavior.json"  # the bundled recordings
-SHIFTED = set('~!@#$%^&*()_+{}|:"<>?')
 
 # Median ms (lognormal, sigma 0.35) used until there are recordings.
 DEFAULT_MEDIANS = {
     "drag_press_ms": 150,     # button down -> cursor starts moving
     "drag_settle_ms": 120,    # cursor stops over the drop zone -> button up
-    "homing_ms": 450,         # click on a field -> first keystroke
-    "resume_ms": 550,         # last keystroke -> mouse moves again
-    "hold_ms": 95,            # key down -> key up
-    "gap_char_ms": 150,       # keystroke intervals by what comes next (see gap_kind)
-    "gap_space_ms": 170,
-    "gap_word_ms": 210,
-    "gap_shift_ms": 260,
-    "gap_punct_ms": 240,
     "scroll_pause_ms": 180,   # between flicks while scrolling
 }
 DEFAULT_DRAG_TIME_SCALE = 1.25  # drags are slower than plain pointing at the same difficulty
 SIGMA = 0.35
-
-
-def gap_kind(prev, ch):
-    if ch == " ":
-        return "space"
-    if prev == " ":
-        return "word"
-    if ch.isupper() or ch in SHIFTED:
-        return "shift"
-    if not ch.isalnum():
-        return "punct"
-    return "char"
 
 
 def load_tasks(pattern):
@@ -98,9 +77,6 @@ class Behavior:
         if s:
             return float(self.rng.choice(s)) * float(self.rng.lognormal(0, 0.08))
         return float(DEFAULT_MEDIANS[name] * self.rng.lognormal(0, SIGMA))
-
-    def key_gap_ms(self, prev, ch):
-        return self.ms(f"gap_{gap_kind(prev, ch)}_ms")
 
     def gesture(self, total):
         """A flick moving about `total` px (positive = down). Returns [[t_ms, dx, dy]]."""
@@ -191,22 +167,6 @@ def fit_behavior(tasks, click_trials=(), step_ms=10.0):
                 expected = fitts[0] + fitts[1] * math.log2(dist / width + 1)
                 if dist > 50 and expected > 100 and moving_ms > 0:
                     drag_ratio.append(moving_ms / expected)
-        elif kind == "type" and t.get("keys"):
-            downs = [k for k in t["keys"] if k[1] == "down" and len(k[2]) == 1]
-            if not downs:
-                continue
-            s["homing_ms"].append(downs[0][0] - t["focus"][0])
-            if "resume_ms" in t:
-                s["resume_ms"].append(t["resume_ms"])
-            for (t0, _, a, _), (t1, _, b, _) in zip(downs, downs[1:]):
-                if 0 < t1 - t0 < 2000:  # longer gaps are thinking/reading, not rhythm
-                    s[f"gap_{gap_kind(a, b)}_ms"].append(t1 - t0)
-            down_at = {}
-            for tt, kind_, key, code in t["keys"]:
-                if kind_ == "down":
-                    down_at[code] = tt
-                elif code in down_at and code not in ("ShiftLeft", "ShiftRight"):
-                    s["hold_ms"].append(tt - down_at.pop(code))
         elif kind == "scroll" and t.get("wheel"):
             g, pauses = split_gestures(t["wheel"])
             gestures += g

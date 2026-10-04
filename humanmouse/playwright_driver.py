@@ -4,7 +4,7 @@ import time
 
 import numpy as np
 
-from .behavior import DEFAULT_BEHAVIOR, SHIFTED, Behavior
+from .behavior import DEFAULT_BEHAVIOR, Behavior
 from .generate import PathGenerator
 
 
@@ -47,7 +47,6 @@ class HumanMouse:
         self.temperature = temperature
         self.jitter = timing_jitter_ms
         self.behavior = behavior or Behavior(DEFAULT_BEHAVIOR if DEFAULT_BEHAVIOR.exists() else None, rng=self.gen.rng)
-        self._resume_at = 0.0  # after typing, the hand needs time to get back to the mouse
 
     async def _sleep(self, seconds):  # the sync API swaps in a blocking sleep
         await asyncio.sleep(seconds)
@@ -79,8 +78,7 @@ class HumanMouse:
         happens first and only the rest of any required pause (`not_before`, a perf_counter
         time) is waited out."""
         pts, times = self.gen.path(self.position, (x, y), target_width, self.temperature)
-        wait = max(self._resume_at, not_before) - time.perf_counter()
-        self._resume_at = 0.0
+        wait = not_before - time.perf_counter()
         if wait > 0:
             await self._sleep(wait)
 
@@ -244,51 +242,6 @@ class HumanMouse:
         gx, gy = grab
         await self.drag(grab, (gx, gy + shift) if vertical else (gx + shift, gy), precision=6.0)
 
-    async def type_into(self, target, text, submit=False):
-        """Click a field (skip with target=None to type where the focus already is), then type
-        with a human rhythm: key rollover, explicit Shift for capitals and symbols."""
-        if target is not None:
-            await self.click(target)
-        await self._pause("homing_ms")
-        text = text + ("\n" if submit else "")
-        b, rng = self.behavior, self.gen.rng
-        events, t, prev, shift_until = [], 0.0, " ", -1.0
-        for i, ch in enumerate(text):
-            if i:
-                t += b.key_gap_ms(prev, ch)
-            key = "Enter" if ch == "\n" else ch
-            hold = b.ms("hold_ms")
-            if ch == prev:  # the same key has to come up before it can go down again
-                hold = min(hold, 0.7 * (t - events[-1][0]) if events else hold)
-            if ch.isupper() or ch in SHIFTED:
-                start = t - rng.uniform(30, 80)
-                if start <= shift_until:  # still held from the previous capital: extend it
-                    events = [e for e in events if e[1:] != ("up", "Shift")]
-                else:
-                    events.append((max(start, events[-1][0] + 1 if events else start), "down", "Shift"))
-                shift_until = t + hold + rng.uniform(10, 40)
-                events.append((shift_until, "up", "Shift"))
-            events.append((t, "down", key))
-            events.append((t + hold, "up", key))
-            prev = ch
-        events.sort(key=lambda e: e[0])
-        times = [e[0] for e in events]
-        times = [times[0] - 1.0] + times  # _play starts at index 1
-        kb = self.page.keyboard
-
-        async def step(lo, hi):  # every key event must happen, in order
-            for at, action, key in events[lo - 1 : hi]:
-                try:
-                    await (kb.down(key) if action == "down" else kb.up(key))
-                except Exception:  # not on the US layout (é, emoji...): insert the text instead
-                    if action == "down":
-                        await kb.insert_text(key)
-
-        await self._play(np.array(times) - times[0], step)
-        # resume_ms is measured from the last key press, not its release.
-        last_down = max(e[0] for e in events if e[1] == "down")
-        self._resume_at = time.perf_counter() + (b.ms("resume_ms") - (events[-1][0] - last_down)) / 1000
-
     async def scroll_by(self, dy):
         """One trackpad flick of about `dy` px (positive = down) at the current cursor position."""
         g = self.behavior.gesture(dy)
@@ -305,15 +258,17 @@ class HumanMouse:
         """Flick-scroll until `target` sits comfortably in view (re-measuring after each flick,
         like a person watching the page), with the cursor over `container` (default: the page)."""
         rng = self.gen.rng
-        if container is not None:
-            cx, cy, cw, ch = await self._raw_box(container)
-        else:
-            vp = self.page.viewport_size
-            cx, cy, cw, ch = 0, 0, vp["width"], vp["height"]
+        vp = self.page.viewport_size
+        cx, cy, cw, ch = 0, 0, vp["width"], vp["height"]
+        if container is not None:  # only the on-screen part: that's where the cursor and the target can be
+            x, y, w, h = await self._raw_box(container)
+            cx, cy = max(x, 0), max(y, 0)
+            cw, ch = min(x + w, vp["width"]) - cx, min(y + h, vp["height"]) - cy
         px, py = self.position
         if not (cx < px < cx + cw and cy < py < cy + ch):
             await self.move_to(*self.gen.point_in_box(cx, cy, cw, ch), min(cw, ch))
         goal = rng.uniform(0.3, 0.6)
+        prev = None
         for _ in range(max_flicks):
             box = await self._locator(target).bounding_box()
             if box is None:
@@ -321,6 +276,9 @@ class HumanMouse:
             center = box["y"] + box["height"] / 2
             if cy + 0.15 * ch < center < cy + 0.85 * ch:
                 return
+            if prev is not None and abs(center - prev) < 1 and cy <= box["y"] and box["y"] + box["height"] <= cy + ch:
+                return  # at the end of the scroll range (e.g. a footer) but fully in view
+            prev = center
             remaining = center - (cy + goal * ch)
             # People misjudge the distance a bit and rarely do one huge flick.
             size = remaining * rng.lognormal(0, 0.2)

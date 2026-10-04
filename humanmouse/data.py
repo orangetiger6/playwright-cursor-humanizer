@@ -26,7 +26,7 @@ def load_trials(pattern, sources=None):
             session = json.load(f)
         if sources and session.get("source", "human") not in sources:
             continue
-        # Pointing movements only; drag / type / scroll task records are read by humanmouse.behavior.
+        # Pointing movements only; drag / scroll task records are read by humanmouse.behavior.
         trials.extend(t for t in session["trials"] if "click" in t and t.get("kind", "click") == "click")
     return trials
 
