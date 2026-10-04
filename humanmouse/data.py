@@ -9,8 +9,6 @@ import json
 import math
 
 import numpy as np
-import torch
-from torch.utils.data import Dataset
 
 STEP_MS = 10.0
 HOLD_GAP_MS = 50.0
@@ -106,7 +104,7 @@ def prepare(trial, step_ms=STEP_MS):
     return q.astype(np.float32), cond
 
 
-class TrajectoryDataset(Dataset):
+class TrajectoryDataset:  # a map-style torch dataset; torch is only imported for training
     """Teacher-forcing samples.
 
     Input at step t:  [previous delta (scaled), position relative to target, condition]
@@ -142,10 +140,12 @@ class TrajectoryDataset(Dataset):
         x = np.concatenate([prev, rel, np.broadcast_to(cond, (len(d), COND_DIM))], axis=1)
         end = np.zeros(len(d), np.float32)
         end[-1] = 1.0
+        import torch
+
         return torch.from_numpy(x.astype(np.float32)), torch.from_numpy(d.astype(np.float32)), torch.from_numpy(end)
 
 
-class BucketBatchSampler(torch.utils.data.Sampler):
+class BucketBatchSampler:
     """Batches of similar-length trajectories, in random order, to avoid padding waste."""
 
     def __init__(self, dataset, batch_size, shuffle=True, pool=50, seed=0):
@@ -169,6 +169,8 @@ class BucketBatchSampler(torch.utils.data.Sampler):
 
 
 def collate(batch):
+    import torch
+
     n = max(len(x) for x, _, _ in batch)
     xs = torch.zeros(len(batch), n, batch[0][0].shape[1])
     ds = torch.zeros(len(batch), n, 2)

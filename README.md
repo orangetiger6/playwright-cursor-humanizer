@@ -16,11 +16,26 @@ python -m playwright install chromium
 python scripts/demo.py --trials 20      # opens Chromium and performs the recorder tasks; watch the red cursor
 ```
 
-**Install size:** the path model runs on PyTorch. On Linux, `pip` pulls the CUDA build by default (several GB).
-Generation is CPU-only, so install the CPU wheel first (~200 MB):
-`pip install torch --index-url https://download.pytorch.org/whl/cpu`. Windows and macOS get a CPU build by default.
+The bundled model runs on numpy, so installing doesn't need PyTorch (only training does, see Usage).
 
-**In your own script** (async):
+**In an existing Playwright script:** `humanize` makes Playwright's own mouse calls move like a person,
+so nothing else in the script has to change:
+
+```python
+from humanmouse import humanize
+
+human = humanize(page)          # or humanize(context): all its pages, including ones opened later
+await page.click("button#submit")                         # generated path, then press and release
+await page.locator("#card").drag_to(page.locator("#done-column"))
+await human.set_slider("#volume", 70)                     # actions Playwright has no method for
+```
+
+It covers `click`, `dblclick`, `hover` and `drag_and_drop` / `drag_to` on pages and locators, plus
+`page.mouse.move` and vertical `page.mouse.wheel`. Calls with options it can't honor (`position`,
+`modifiers`, `force`, `trial`, `delay`) and pages that weren't humanized use Playwright's own behavior.
+Keyboard input is untouched. It works with both async and sync Playwright.
+
+**Calling it directly** (async):
 
 ```python
 from humanmouse import HumanMouse
@@ -48,12 +63,13 @@ Use one `HumanMouse` per page, and pass `position=(x, y)` if the cursor isn't at
 collect/            recorder page + tiny server (writes data/raw/*.json)
 humanmouse/
   data.py           resample → trim → canonical frame (start (0,0), target (1,0)) + condition vector
-  model.py          GRU + bivariate Gaussian mixture density head (Graves 2013), end-of-movement flag
-  generate.py       PathGenerator: sample, snap endpoint, map back to screen coords
+  model.py          (training, PyTorch) GRU + bivariate Gaussian mixture density head (Graves 2013), end-of-movement flag
+  generate.py       PathGenerator: numpy inference, sample, snap endpoint, map back to screen coords
   behavior.py       drag and trackpad-scroll timing: fitted from recordings, with defaults
-  playwright_driver.py  HumanMouse: move_to / click / drag / set_slider / scroll_to with real-time pacing
+  playwright_driver.py  HumanMouse: move_to / click / hover / drag / set_slider / scroll_to with real-time pacing
   sync_api.py       the same HumanMouse for sync_playwright
-  assets/           the bundled model.pt and behavior.json
+  humanize.py       humanize(page): route Playwright's own click / drag / hover / wheel through HumanMouse
+  assets/           the bundled model.npz (numpy weights) and behavior.json
   metrics.py        kinematic metrics, Fitts' law fit, KS statistic
 scripts/
   make_synthetic.py hand-built fake data for smoke tests
@@ -80,7 +96,7 @@ chosen, and the small remaining endpoint error is blended into the tail of the p
 ## Usage
 
 ```bash
-pip install -e ".[eval,test]"      # or: pip install -r requirements.txt
+pip install -e ".[train,eval,test]"      # or: pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
@@ -154,7 +170,10 @@ actually reached the page, which captures timing effects the model alone can't s
 
 **5. Use it**
 
-Leave out `generator` and `behavior` to use the bundled ones. To use your own:
+Leave out `generator` and `behavior` to use the bundled ones. `PathGenerator` loads a `.pt` checkpoint
+when PyTorch is installed. To ship one without torch, convert it to numpy weights:
+`python -c "from humanmouse.generate import export_npz; export_npz('checkpoints/model.pt', 'model.npz')"`.
+`humanize(page, generator=gen, behavior=...)` takes the same arguments. To use your own:
 
 ```python
 from humanmouse import Behavior, HumanMouse, PathGenerator

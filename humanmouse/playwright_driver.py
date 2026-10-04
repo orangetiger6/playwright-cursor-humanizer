@@ -144,15 +144,22 @@ class HumanMouse:
             return vis
         return box["x"], box["y"], box["width"], box["height"]
 
-    async def click(self, target, button="left"):
-        """Move to a locator (or selector string) like a person would, then press and release."""
+    async def hover(self, target):
+        """Move onto a locator (or selector string) like a person would and stay there."""
         x, y, w, h = await self._box(target)
         await self.move_to(*self.gen.point_in_box(x, y, w, h), min(w, h))
+
+    async def click(self, target, button="left", click_count=1):
+        """Move to a locator (or selector string), then press and release (`click_count=2`: double-click)."""
+        await self.hover(target)
         rng = self.gen.rng
         await self._sleep(rng.uniform(0.04, 0.12))
-        await self.page.mouse.down(button=button)
-        await self._sleep(rng.uniform(0.05, 0.11))
-        await self.page.mouse.up(button=button)
+        for n in range(1, click_count + 1):
+            if n > 1:
+                await self._sleep(rng.uniform(0.06, 0.14))
+            await self.page.mouse.down(button=button, click_count=n)
+            await self._sleep(rng.uniform(0.05, 0.11))
+            await self.page.mouse.up(button=button, click_count=n)
 
     async def drag(self, source, target, precision=None):
         """Press on `source`, carry it to `target` and release.

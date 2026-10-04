@@ -9,9 +9,10 @@ description = "Learn human cursor movement, dragging and scrolling from recordin
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
-dependencies = ["torch>=2.2", "numpy>=1.26", "playwright>=1.40"]
+dependencies = ["numpy>=1.26", "playwright>=1.40"]
 
 [project.optional-dependencies]
+train = ["torch>=2.2"]  # training only; the bundled model runs on numpy
 eval = ["matplotlib>=3.8"]
 test = ["pytest>=8"]
 
@@ -19,7 +20,7 @@ test = ["pytest>=8"]
 packages = ["humanmouse"]
 
 [tool.setuptools.package-data]
-humanmouse = ["assets/model.pt", "assets/behavior.json"]
+humanmouse = ["assets/model.npz", "assets/behavior.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

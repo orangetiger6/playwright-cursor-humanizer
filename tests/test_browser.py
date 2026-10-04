@@ -118,3 +118,46 @@ def test_sync_api_with_bundled_defaults():
         result = [page.locator("#far").text_content(), value, page.evaluate("card.parentElement.id")]
         browser.close()
     assert result == ["clicked", 30, "done"]
+
+
+COUNT_MOVES = "window.moves = 0; addEventListener('mousemove', () => moves++)"
+
+
+def test_humanize_routes_playwright_calls(generator, run_page):
+    from humanmouse import humanize
+
+    async def fn(page):
+        await page.evaluate(COUNT_MOVES)
+        human = humanize(page, generator=generator, position=(500, 650))
+        await page.click("#far")  # below the fold: scrolled into view first
+        await page.locator("#card").drag_to(page.locator("#done"))
+        moved = await page.evaluate("moves")
+        await page.mouse.move(40, 50)
+        tracked = human.position
+        await page.locator("#r1").click(position={"x": 5, "y": 5})  # not supported: Playwright's own click
+        return [await page.evaluate("[far.textContent, card.parentElement.id]"), moved > 50, tracked, human.position]
+    texts, many_moves, tracked, after_native = run_page(WIDGETS, fn)
+    assert texts == ["clicked", "done"]
+    assert many_moves
+    assert tracked == pytest.approx((40, 50)) and after_native == pytest.approx((40, 50))
+
+
+def test_humanize_sync_context():
+    sync_api = pytest.importorskip("playwright.sync_api")
+    from humanmouse import humanize
+
+    with sync_api.sync_playwright() as p:
+        try:
+            browser = p.chromium.launch()
+        except Exception as e:
+            pytest.skip(f"Chromium not available: {e}")
+        context = browser.new_context(viewport={"width": 1000, "height": 700})
+        humanize(context)  # pages opened later are covered too
+        page = context.new_page()
+        page.set_content(WIDGETS)
+        page.evaluate(COUNT_MOVES)
+        page.dblclick("#card")
+        page.locator("#far").click()
+        result = [page.locator("#far").text_content(), page.evaluate("moves") > 20]
+        browser.close()
+    assert result == ["clicked", True]

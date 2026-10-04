@@ -97,5 +97,5 @@ def _sync_method(name):
     return call
 
 
-for _name in ["move_to", "click", "drag", "point_at", "set_slider", "scroll_by", "scroll_to"]:
+for _name in ["move_to", "hover", "click","drag", "point_at", "set_slider", "scroll_by", "scroll_to"]:
     setattr(HumanMouse, _name, _sync_method(_name))

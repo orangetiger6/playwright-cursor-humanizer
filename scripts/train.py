@@ -3,7 +3,8 @@
     python scripts/train.py --data "data/raw/*.json" --out checkpoints/model.pt
 
 Fine-tune a model pretrained on a public dataset on your own recordings (architecture and
-delta scaling come from the checkpoint; use a lower learning rate):
+delta scaling come from the checkpoint, a .pt or the bundled humanmouse/assets/model.npz; use a lower
+learning rate):
 
     python scripts/train.py --init checkpoints/pretrained.pt --data "data/raw/*.json" --lr 2e-4 --epochs 30
 """
@@ -19,6 +20,7 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from humanmouse.data import BucketBatchSampler, TrajectoryDataset, collate, load_trials  # noqa: E402
+from humanmouse.generate import load_checkpoint  # noqa: E402
 from humanmouse.model import MouseMDN  # noqa: E402
 
 
@@ -62,7 +64,10 @@ def main():
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    init = torch.load(args.init, map_location="cpu") if args.init else None
+    init = None
+    if args.init:
+        weights, config, stats = load_checkpoint(args.init)
+        init = {"model": {k: torch.from_numpy(v) for k, v in weights.items()}, "config": config, "stats": stats}
 
     trials = load_trials(args.data)
     if not trials:
