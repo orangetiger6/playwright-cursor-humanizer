@@ -65,6 +65,7 @@ let aim = null;
 let hotRow = null;
 let pos = [innerWidth / 2, innerHeight / 2];
 let total = 0;
+const done = { drag: 0, missed: 0, scroll: 0 };  // finished tasks this page load, shown in the HUD
 
 function newSession() {
   return {
@@ -86,7 +87,9 @@ function pickKind() {
 }
 
 function updateHud(msg) {
-  hud.textContent = `${SOURCE} · trials this session: ${total} · unsaved: ${session.trials.length}` +
+  const counts = (ENABLED.includes('drag') ? ` · drags ${done.drag}` + (done.missed ? ` (+${done.missed} missed)` : '') : '') +
+    (ENABLED.includes('scroll') ? ` · scrolls ${done.scroll}` : '');
+  hud.textContent = `${SOURCE} · trials this session: ${total}${counts} · unsaved: ${session.trials.length}` +
     (task ? ` · ${INSTRUCTIONS[task.kind]}` : '') + (msg ? ` · ${msg}` : '');
 }
 
@@ -169,6 +172,8 @@ function startScroll(t, x, y) {
 function commit(record) {
   session.trials.push(record);
   total++;
+  if (record.kind === 'drag') done[record.success ? 'drag' : 'missed']++;
+  if (record.kind === 'scroll') done.scroll++;
   updateHud();
   if (session.trials.length >= AUTOSAVE_EVERY) saveSession();
 }

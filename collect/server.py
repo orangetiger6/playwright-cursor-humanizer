@@ -1,6 +1,7 @@
 """Serves the recorder page and writes posted sessions to data/<source>/.
 
-    python collect/server.py            # then open http://127.0.0.1:8765
+    python collect/server.py                      # then open http://127.0.0.1:8765
+    python collect/server.py --tasks drag,scroll  # a session of only drags and scrolls
 """
 import argparse
 import json
@@ -62,9 +63,11 @@ def serve_in_background(port=8765):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--tasks", help="comma-separated subset of click,drag,scroll for the link it prints")
     args = parser.parse_args()
     server = make_server(args.port)
-    print(f"Recorder at http://127.0.0.1:{args.port}  (Ctrl+C to stop; press S in the page to save)")
+    url = f"http://127.0.0.1:{args.port}/" + (f"?tasks={args.tasks}" if args.tasks else "")
+    print(f"Recorder at {url}  (Ctrl+C to stop; press S in the page to save)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

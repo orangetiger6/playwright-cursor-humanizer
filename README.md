@@ -92,7 +92,8 @@ python collect/server.py
 
 Open http://127.0.0.1:8765, click **Begin**, then follow the instruction in the top bar. Most tasks are
 "click the blue target"; mixed in are drags (orange square into the dashed box) and scrolling (scroll the list to the blue
-row and click it). Saves every 25 trials (or press `S`). `?tasks=drag,scroll` limits the mix. Tips:
+row and click it). Saves every 25 trials (or press `S`). `?tasks=drag,scroll` limits the mix, or start the
+server with `--tasks drag,scroll` to get that link; the top bar counts finished drags and scrolls. Tips:
 - Aim for 1,500+ trials across several sessions and days. Short sessions keep the data free of fatigue.
 - Record on the same mouse, OS pointer speed and screen scaling that you want to reproduce.
 - Work at a normal pace. Don't try to be fast or careful; the goal is ordinary behavior.
